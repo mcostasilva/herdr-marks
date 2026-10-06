@@ -46,12 +46,6 @@ command = "herdr-marks.jump"
 description = "jump to mark"
 
 [[keys.command]]
-key = "prefix+e"
-type = "plugin_action"
-command = "herdr-marks.list"
-description = "list marks and jump"
-
-[[keys.command]]
 key = "prefix+u"
 type = "plugin_action"
 command = "herdr-marks.remove"
@@ -69,7 +63,7 @@ marks the workspace as **A** (the workspace prompt uppercases your letter).
 **Ctrl+B → ' → a** jumps to pane **a**; uppercase **A** jumps to workspace **A**.
 The small popup captures the final letter, so ordinary typing is unaffected.
 Its mark letters use the same bold golden color as the sidebar, without brackets.
-**Ctrl+B → e** lists marks; **Ctrl+B → u → letter** removes one. No mark shortcut
+**Ctrl+B → '** lists marks and jumps; **Ctrl+B → u → letter** removes one. No mark shortcut
 uses Alt, so these bindings do not conflict with Alt-based window managers.
 **Esc** or **Ctrl+C** cancels. **q** is a valid mark, not a quit key.
 
