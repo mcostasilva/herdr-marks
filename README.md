@@ -81,21 +81,23 @@ rows = [
 
 [ui.sidebar.agents]
 rows = [
-  ["state_icon", { token = "$marks", fg = "#f9e2af", bold = true }, "machine", "workspace", "tab"],
-  ["agent"],
+  ["state_icon", "machine", "workspace", "tab"],
+  [{ token = "$marks", fg = "#f9e2af", bold = true }, "pane"],
 ]
 ```
 
-Agent-specific `rows_by_agent` overrides replace the default layout; add `$marks`
-to those too if you use them. Empty tokens disappear. The plugin reserves the
+Agent marks appear beside the pane name on the second line. Workspace marks
+stay on the first line of Spaces. Agent-specific `rows_by_agent` overrides
+replace the default layout; add `$marks` to their second line too if you use
+them. Empty tokens disappear. The plugin reserves the
 custom token `marks`; other metadata is untouched.
 
 ```text
 Spaces                          Agents
-  ● A api                         ● a api · tests
-  ● B frontend                        OpenCode
-  ● c services                    ● b frontend
-                                      Claude
+  ● A api                         ● api · tests
+  ● B frontend                        a OpenCode
+  ● c services                    ● frontend
+                                      b Claude
 ```
 
 Ordinary shell/editor panes have no Agent row. Their marks appear on their
