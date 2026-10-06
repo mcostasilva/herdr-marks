@@ -140,12 +140,14 @@ pub fn prompt(client: &Client, directory: &Path, scope: &str) -> Result<()> {
         !matches!(mode, Mode::Pane | Mode::Workspace) || target.is_some(),
         "missing captured mark target"
     );
-    let snapshot = client.snapshot()?;
     let rows = {
         let mut store = Store::acquire(directory, client.timeout)?;
+        // Fetch under the lock so another command cannot add a mark newer than
+        // the snapshot used to decide which terminals are gone.
+        let snapshot = client.snapshot()?;
         let session = store.session(scope);
-        session.reconcile(&snapshot);
-        session
+        let removed = session.reconcile(&snapshot);
+        let rows = session
             .marks
             .iter()
             .map(|(key, mark)| PopupRow {
@@ -153,7 +155,13 @@ pub fn prompt(client: &Client, directory: &Path, scope: &str) -> Result<()> {
                 reachable: mark.target.resolve(&snapshot).is_some(),
                 label: safe_text(&mark.label, 80),
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        if removed {
+            let updates = session.tokens(&snapshot);
+            store.save()?;
+            workflow::publish_tokens(client, updates)?;
+        }
+        rows
     }; // Release before waiting for the user.
     let guard = TerminalGuard::enter()?;
     let mut offset = 0usize;

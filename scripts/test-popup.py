@@ -37,7 +37,9 @@ SNAPSHOT = {
 
 
 class PopupTests(unittest.TestCase):
-    def run_popup(self, mode, key, target=None, saved_marks=None):
+    def run_popup(
+        self, mode, key, target=None, saved_marks=None, initial_snapshot=None
+    ):
         with tempfile.TemporaryDirectory(prefix="herdr-marks-popup-") as directory:
             root = Path(directory)
             listener = socket.socket(socket.AF_UNIX)
@@ -47,7 +49,9 @@ class PopupTests(unittest.TestCase):
             calls = []
             errors = []
             stop = threading.Event()
-            snapshot = copy.deepcopy(SNAPSHOT)
+            snapshot = copy.deepcopy(
+                SNAPSHOT if initial_snapshot is None else initial_snapshot
+            )
             if saved_marks is not None:
                 (root / "state").mkdir()
                 (root / "state/state.json").write_text(
@@ -235,6 +239,40 @@ class PopupTests(unittest.TestCase):
         )
         self.assertNotIn(b"[b]", output)
         self.assertIn(b"\x1b[38;2;249;226;175m\x1b[1mb", output)
+
+    def test_cancelled_picker_saves_cleanup_and_clears_shell_rollup(self):
+        snapshot = copy.deepcopy(SNAPSHOT)
+        snapshot["workspaces"][0]["tokens"] = {"marks": "c", "summary": "keep"}
+        calls, state, output = self.run_popup(
+            "jump",
+            b"\x1b",
+            initial_snapshot=snapshot,
+            saved_marks={
+                "b": {
+                    "target": {"kind": "pane", "terminal_id": "term_one"},
+                    "label": "api",
+                },
+                "c": {
+                    "target": {"kind": "pane", "terminal_id": "closed_shell"},
+                    "label": "closed shell",
+                },
+                "A": {
+                    "target": {
+                        "kind": "workspace",
+                        "workspace_id": "gone",
+                        "witnesses": ["gone"],
+                    },
+                    "label": "old workspace",
+                },
+            },
+        )
+        marks = next(iter(state["sessions"].values()))["marks"]
+        self.assertEqual(set(marks), {"A", "b"})
+        self.assertNotIn(b"closed shell", output)
+        self.assertIn(b"old workspace", output)
+        report = next(c for c in calls if c["method"] == "workspace.report_metadata")
+        self.assertEqual(report["params"]["tokens"], {"marks": None})
+        self.assertFalse(any(c["method"].endswith(".focus") for c in calls))
 
 
 if __name__ == "__main__":

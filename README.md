@@ -152,11 +152,19 @@ that terminal when moved across tabs or workspaces. A workspace mark records its
 workspace ID and live terminal witnesses; a rename or reorder does not invalidate
 it, but moving its panes elsewhere does not move the workspace mark.
 
+Pane marks are automatically deleted when their terminal disappears. Closing a
+pane, tab, or workspace triggers a sync; sync and listing commands also clean up
+missing terminals. Opening the picker performs and saves the same cleanup before
+waiting for input, even if you cancel. A failed snapshot leaves saved marks
+untouched. Moving a pane or exiting an agent without closing its pane preserves
+the marks. Uppercase workspace marks are not automatically deleted.
+
 Marks survive detach/reconnect and a handoff **when terminal identities are
-preserved**. A full restart that recreates terminals makes old marks stale. This
-version deliberately does **not** match by folder, label, or agent name: two
-similar panes must never silently exchange your marks. Re-mark restored targets
-explicitly. Stale marks remain in the list with `!`, and jumping to one fails.
+preserved**. A full restart that recreates terminals removes old pane marks on
+the next cleanup. The plugin deliberately does **not** match by folder, label,
+or agent name: two similar panes must never silently exchange your marks.
+Re-mark restored targets explicitly. Stale workspace marks and ambiguous pane
+identities remain in the list with `!`, and jumping to one fails.
 
 Startup and lifecycle hooks republish tokens. If a metadata update fails, the
 mark remains saved; run `sync` to repair the display. Detached action errors are

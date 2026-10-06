@@ -3,7 +3,7 @@
 use crate::api::{Pane, Snapshot, TOKEN};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -139,7 +139,21 @@ impl Session {
         Ok(())
     }
 
-    pub fn reconcile(&mut self, snapshot: &Snapshot) {
+    /// Refresh live targets and remove missing pane marks. Returns whether any
+    /// marks were removed so a read-only picker can persist cleanup if needed.
+    pub fn reconcile(&mut self, snapshot: &Snapshot) -> bool {
+        // Absence, not failed resolution, proves a pane is gone: duplicate
+        // terminal identities remain ambiguous and must not delete marks.
+        let terminals: BTreeSet<_> = snapshot
+            .panes
+            .iter()
+            .map(|pane| pane.terminal_id.as_str())
+            .collect();
+        let before = self.marks.len();
+        self.marks.retain(|_, mark| match &mark.target {
+            Target::Pane { terminal_id } => terminals.contains(terminal_id.as_str()),
+            Target::Workspace { .. } => true,
+        });
         for mark in self.marks.values_mut() {
             match mark.target.resolve(snapshot) {
                 Some(Resolved::Pane(pane)) => {
@@ -164,9 +178,10 @@ impl Session {
                         mark.target = target;
                     }
                 }
-                None => {} // Keep stale marks visible in the picker for removal/reassignment.
+                None => {} // Keep stale workspace and ambiguous pane marks for manual recovery.
             }
         }
+        self.marks.len() != before
     }
 
     /// Desired token for every resource, including empty values so reassigned

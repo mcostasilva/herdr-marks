@@ -1,6 +1,6 @@
 use crate::{
     api::{Host, PLUGIN, Snapshot, TOKEN},
-    model::{Resolved, Resource, Session, Target, pane_label},
+    model::{Resolved, Resource, Session, Target, TokenUpdate, pane_label},
     state::Store,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -107,6 +107,11 @@ pub fn run(
     // The saved mark is authoritative. If publishing fails, a later sync repairs
     // the sidebar instead of losing the user's mark.
     store.save()?;
+    publish_tokens(host, updates)?;
+    Ok(Outcome { message, listing })
+}
+
+pub(crate) fn publish_tokens(host: &impl Host, updates: Vec<TokenUpdate>) -> Result<()> {
     let mut failures = Vec::new();
     for update in updates {
         let (method, key) = match update.kind {
@@ -128,7 +133,7 @@ pub fn run(
         "marks saved, but sidebar refresh failed; run sync: {}",
         failures.join("; ")
     );
-    Ok(Outcome { message, listing })
+    Ok(())
 }
 
 fn set(session: &mut Session, key: char, target: Target, snapshot: &Snapshot) -> Result<()> {

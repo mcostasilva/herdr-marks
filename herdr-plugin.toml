@@ -80,3 +80,7 @@ command = ["target/release/herdr-marks", "sync"]
 [[events]]
 on = "workspace.closed"
 command = ["target/release/herdr-marks", "sync"]
+
+[[events]]
+on = "tab.closed"
+command = ["target/release/herdr-marks", "sync"]

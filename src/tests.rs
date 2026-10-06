@@ -51,6 +51,9 @@ impl FakeHost {
 
 impl Host for FakeHost {
     fn snapshot(&self) -> Result<Snapshot> {
+        if self.fail.borrow().as_deref() == Some("session.snapshot") {
+            bail!("simulated snapshot failure");
+        }
         Ok(self.snapshot.borrow().clone())
     }
     fn request(&self, method: &str, params: Value) -> Result<Value> {
@@ -317,7 +320,7 @@ fn repeated_jump_to_current_pane_preserves_back_location() {
 }
 
 #[test]
-fn stale_mark_never_sends_focus_and_is_listed_as_stale() {
+fn missing_pane_mark_never_sends_focus_and_is_removed_from_listing() {
     let host = FakeHost::new();
     let directory = TempDir::new().unwrap();
     host.run(&directory, Operation::Set('a', Selection::default()))
@@ -331,7 +334,182 @@ fn stale_mark_never_sends_focus_and_is_listed_as_stale() {
         .unwrap()
         .listing
         .unwrap();
-    assert_eq!(listing[0]["reachable"], false);
+    assert_eq!(listing, json!([]));
+    assert!(!host.snapshot.borrow().panes[0].tokens.contains_key(TOKEN));
+    let mut store = Store::acquire(directory.path(), Duration::from_secs(1)).unwrap();
+    assert!(store.session("session-one").marks.is_empty());
+}
+
+#[test]
+fn cleanup_removes_every_mark_for_closed_panes_and_clears_shell_rollup() {
+    let host = FakeHost::new();
+    let directory = TempDir::new().unwrap();
+    for key in ['a', 'b'] {
+        host.run(&directory, Operation::Set(key, Selection::default()))
+            .unwrap();
+    }
+    host.run(
+        &directory,
+        Operation::Set(
+            'c',
+            Selection {
+                pane_id: Some("w1:p2".into()),
+                ..Selection::default()
+            },
+        ),
+    )
+    .unwrap();
+    host.run(
+        &directory,
+        Operation::Set(
+            'd',
+            Selection {
+                pane_id: Some("w2:p1".into()),
+                ..Selection::default()
+            },
+        ),
+    )
+    .unwrap();
+    host.run(&directory, Operation::Set('A', Selection::default()))
+        .unwrap();
+    let mut store = Store::acquire(directory.path(), Duration::from_secs(1)).unwrap();
+    store
+        .session("other-session")
+        .set('a', Target::pane(&snapshot().panes[0]), "other".into())
+        .unwrap();
+    store.save().unwrap();
+    drop(store);
+    // Simulate bulk closure of a tab/workspace, leaving an unrelated pane live.
+    host.snapshot
+        .borrow_mut()
+        .panes
+        .retain(|p| p.workspace_id != "w1");
+    host.run(&directory, Operation::Sync).unwrap();
+    assert_eq!(host.snapshot.borrow().workspaces[0].tokens.get(TOKEN), None);
+    let mut store = Store::acquire(directory.path(), Duration::from_secs(1)).unwrap();
+    assert_eq!(
+        store
+            .session("session-one")
+            .marks
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec!['A', 'd']
+    );
+    assert!(store.session("other-session").marks.contains_key(&'a'));
+    drop(store);
+    host.calls.borrow_mut().clear();
+    let saved = std::fs::read(directory.path().join("state.json")).unwrap();
+    host.run(&directory, Operation::Sync).unwrap();
+    assert!(host.calls.borrow().is_empty());
+    assert_eq!(
+        saved,
+        std::fs::read(directory.path().join("state.json")).unwrap()
+    );
+}
+
+#[test]
+fn cleanup_preserves_moved_panes_and_panes_whose_agent_exits() {
+    let mut snapshot = snapshot();
+    let mut session = Session::default();
+    session
+        .set('a', Target::pane(&snapshot.panes[0]), "agent".into())
+        .unwrap();
+    snapshot.panes[0].pane_id = "w2:p9".into();
+    snapshot.panes[0].workspace_id = "w2".into();
+    snapshot.panes[0].tab_id = "w2:t4".into();
+    snapshot.panes[0].agent = None;
+    assert!(!session.reconcile(&snapshot));
+    assert!(session.marks[&'a'].target.resolve(&snapshot).is_some());
+    assert!(
+        session
+            .tokens(&snapshot)
+            .iter()
+            .any(|t| t.kind == Resource::Workspace && t.id == "w2" && t.value == "a")
+    );
+}
+
+#[test]
+fn cleanup_does_not_confuse_ambiguous_terminal_identity_with_absence() {
+    let mut snapshot = snapshot();
+    let mut session = Session::default();
+    session
+        .set('a', Target::pane(&snapshot.panes[0]), "agent".into())
+        .unwrap();
+    snapshot.panes[1].terminal_id = snapshot.panes[0].terminal_id.clone();
+    assert!(!session.reconcile(&snapshot));
+    assert!(session.marks.contains_key(&'a'));
+    assert!(session.marks[&'a'].target.resolve(&snapshot).is_none());
+}
+
+#[test]
+fn snapshot_failure_does_not_delete_or_modify_saved_marks() {
+    let host = FakeHost::new();
+    let directory = TempDir::new().unwrap();
+    host.run(&directory, Operation::Set('a', Selection::default()))
+        .unwrap();
+    let path = directory.path().join("state.json");
+    let saved = std::fs::read(&path).unwrap();
+    host.snapshot.borrow_mut().panes.clear();
+    *host.fail.borrow_mut() = Some("session.snapshot".into());
+    host.calls.borrow_mut().clear();
+    assert!(host.run(&directory, Operation::Sync).is_err());
+    assert_eq!(saved, std::fs::read(path).unwrap());
+    assert!(host.calls.borrow().is_empty());
+}
+
+#[test]
+fn cleanup_remains_saved_if_sidebar_refresh_fails() {
+    let host = FakeHost::new();
+    let directory = TempDir::new().unwrap();
+    host.run(
+        &directory,
+        Operation::Set(
+            'c',
+            Selection {
+                pane_id: Some("w1:p2".into()),
+                ..Selection::default()
+            },
+        ),
+    )
+    .unwrap();
+    host.snapshot
+        .borrow_mut()
+        .panes
+        .retain(|p| p.terminal_id != "term_shell");
+    *host.fail.borrow_mut() = Some("workspace.report_metadata".into());
+    assert!(host.run(&directory, Operation::Sync).is_err());
+    let mut store = Store::acquire(directory.path(), Duration::from_secs(1)).unwrap();
+    assert!(store.session("session-one").marks.is_empty());
+    drop(store);
+    *host.fail.borrow_mut() = None;
+    host.run(&directory, Operation::Sync).unwrap();
+    assert!(
+        !host.snapshot.borrow().workspaces[0]
+            .tokens
+            .contains_key(TOKEN)
+    );
+}
+
+#[test]
+fn stale_workspace_marks_remain_listed_and_do_not_focus_recycled_targets() {
+    let host = FakeHost::new();
+    let directory = TempDir::new().unwrap();
+    host.run(&directory, Operation::Set('A', Selection::default()))
+        .unwrap();
+    for pane in host.snapshot.borrow_mut().panes.iter_mut() {
+        pane.terminal_id = format!("replacement-{}", pane.terminal_id);
+    }
+    host.calls.borrow_mut().clear();
+    assert!(host.run(&directory, Operation::Jump('A')).is_err());
+    assert!(host.calls.borrow().is_empty());
+    let rows = host
+        .run(&directory, Operation::List)
+        .unwrap()
+        .listing
+        .unwrap();
+    assert_eq!(rows[0]["letter"], "A");
+    assert_eq!(rows[0]["reachable"], false);
 }
 
 #[test]
@@ -531,6 +709,11 @@ fn manifest_versions_and_entrypoints_match_the_binary() {
         env!("CARGO_PKG_VERSION")
     );
     assert_eq!(manifest["id"].as_str().unwrap(), "herdr-marks");
+    for event in ["pane.closed", "tab.closed", "workspace.closed"] {
+        assert!(manifest["events"].as_array().unwrap().iter().any(|item| {
+            item["on"].as_str() == Some(event) && item["command"][1].as_str() == Some("sync")
+        }));
+    }
     for section in ["actions", "startup", "events", "panes"] {
         for item in manifest[section].as_array().unwrap() {
             assert_eq!(
