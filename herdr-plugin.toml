@@ -1,0 +1,82 @@
+id = "herdr-marks"
+name = "Marks"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Mark panes with a-z and workspaces with A-Z, show letters in the sidebar, and jump back."
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["cargo", "build", "--release", "--locked", "--target-dir", "target"]
+
+[[startup]]
+command = ["target/release/herdr-marks", "sync"]
+
+[[actions]]
+id = "mark-pane"
+title = "Marks: mark pane (a-z)"
+contexts = ["pane"]
+command = ["target/release/herdr-marks", "open", "pane"]
+
+[[actions]]
+id = "mark-workspace"
+title = "Marks: mark workspace (A-Z)"
+contexts = ["workspace", "pane"]
+command = ["target/release/herdr-marks", "open", "workspace"]
+
+[[actions]]
+id = "jump"
+title = "Marks: jump to letter"
+contexts = ["global", "workspace", "pane"]
+command = ["target/release/herdr-marks", "open", "jump"]
+
+[[actions]]
+id = "remove"
+title = "Marks: remove letter"
+contexts = ["global", "workspace", "pane"]
+command = ["target/release/herdr-marks", "open", "remove"]
+
+[[actions]]
+id = "list"
+title = "Marks: list and jump"
+contexts = ["global", "workspace", "pane"]
+command = ["target/release/herdr-marks", "open", "list"]
+
+[[actions]]
+id = "back"
+title = "Marks: jump back"
+contexts = ["global", "workspace", "pane"]
+command = ["target/release/herdr-marks", "back"]
+
+[[actions]]
+id = "sync"
+title = "Marks: refresh sidebar labels"
+contexts = ["global"]
+command = ["target/release/herdr-marks", "sync"]
+
+[[panes]]
+id = "prompt"
+title = "Marks"
+placement = "popup"
+width = 60
+height = 8
+command = ["target/release/herdr-marks", "prompt"]
+
+[[events]]
+on = "pane.created"
+command = ["target/release/herdr-marks", "sync"]
+
+[[events]]
+on = "pane.closed"
+command = ["target/release/herdr-marks", "sync"]
+
+[[events]]
+on = "pane.moved"
+command = ["target/release/herdr-marks", "sync"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["target/release/herdr-marks", "sync"]
+
+[[events]]
+on = "workspace.closed"
+command = ["target/release/herdr-marks", "sync"]
