@@ -2,7 +2,7 @@
 
 use crate::{
     api::{Client, Host, PLUGIN},
-    model::{Target, safe_text},
+    model::{Resolved, Target, safe_text},
     state::Store,
     workflow::{self, Operation, Selection},
 };
@@ -52,7 +52,7 @@ impl Mode {
     }
     fn heading(self) -> &'static str {
         match self {
-            Self::Pane => "Mark pane: a-z",
+            Self::Pane => "Mark: a-z pane / A-Z workspace",
             Self::Workspace => "Mark workspace: A-Z",
             Self::Jump | Self::List => "Jump to mark: a-z / A-Z",
             Self::Remove => "Remove mark: a-z / A-Z",
@@ -60,13 +60,21 @@ impl Mode {
     }
 }
 
-pub fn open(client: &Client, mode: Mode, selection: &Selection) -> Result<()> {
+pub fn open(client: &impl Host, mode: Mode, selection: &Selection) -> Result<()> {
     let snapshot = client.snapshot()?;
     let mut env = json!({"HERDR_MARKS_MODE": mode.name()});
     if matches!(mode, Mode::Pane | Mode::Workspace) {
         let key = if mode == Mode::Pane { 'a' } else { 'A' };
         let target = selection.capture(key, &snapshot)?;
         env["HERDR_MARKS_TARGET"] = json!(serde_json::to_string(&target)?);
+        if mode == Mode::Pane {
+            // Capture both before opening the popup, not from its eventual focus.
+            let Some(Resolved::Pane(pane)) = target.resolve(&snapshot) else {
+                anyhow::bail!("selected pane identity is ambiguous");
+            };
+            let workspace = Target::workspace(&snapshot, &pane.workspace_id)?;
+            env["HERDR_MARKS_WORKSPACE_TARGET"] = json!(serde_json::to_string(&workspace)?);
+        }
     }
     client.request(
         "plugin.pane.open",
@@ -117,7 +125,6 @@ pub fn input_letter(mode: Mode, key: KeyEvent) -> Option<char> {
         return None;
     }
     Some(match mode {
-        Mode::Pane => c.to_ascii_lowercase(),
         Mode::Workspace => c.to_ascii_uppercase(),
         _ => {
             if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -129,6 +136,21 @@ pub fn input_letter(mode: Mode, key: KeyEvent) -> Option<char> {
     })
 }
 
+fn marking_target(
+    mode: Mode,
+    letter: char,
+    target: Option<&Target>,
+    workspace_target: Option<&Target>,
+) -> Result<Target> {
+    if mode == Mode::Pane && letter.is_ascii_uppercase() {
+        workspace_target
+            .cloned()
+            .context("missing captured workspace target; reopen the marks popup")
+    } else {
+        target.cloned().context("missing captured mark target")
+    }
+}
+
 pub fn prompt(client: &Client, directory: &Path, scope: &str) -> Result<()> {
     let mode = Mode::parse(&std::env::var("HERDR_MARKS_MODE").context("missing popup mode")?)?;
     let target: Option<Target> = std::env::var("HERDR_MARKS_TARGET")
@@ -136,6 +158,11 @@ pub fn prompt(client: &Client, directory: &Path, scope: &str) -> Result<()> {
         .map(|s| serde_json::from_str(&s))
         .transpose()
         .context("invalid captured mark target")?;
+    let workspace_target: Option<Target> = std::env::var("HERDR_MARKS_WORKSPACE_TARGET")
+        .ok()
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("invalid captured workspace target")?;
     ensure!(
         !matches!(mode, Mode::Pane | Mode::Workspace) || target.is_some(),
         "missing captured mark target"
@@ -209,9 +236,10 @@ pub fn prompt(client: &Client, directory: &Path, scope: &str) -> Result<()> {
             continue;
         };
         let operation = match mode {
-            Mode::Pane | Mode::Workspace => {
-                Operation::SetCaptured(letter, target.clone().context("missing target")?)
-            }
+            Mode::Pane | Mode::Workspace => Operation::SetCaptured(
+                letter,
+                marking_target(mode, letter, target.as_ref(), workspace_target.as_ref())?,
+            ),
             Mode::Jump | Mode::List => Operation::Jump(letter),
             Mode::Remove => Operation::Remove(letter),
         };
@@ -296,6 +324,30 @@ fn draw(mode: Mode, rows: &[PopupRow], offset: usize) -> Result<()> {
 #[cfg(test)]
 mod render_tests {
     use super::*;
+
+    #[test]
+    fn letter_case_selects_the_captured_pane_or_workspace() {
+        let pane = Target::Pane {
+            terminal_id: "original-pane".into(),
+        };
+        let workspace = Target::Workspace {
+            workspace_id: "original-workspace".into(),
+            witnesses: vec!["original-pane".into()],
+        };
+        assert_eq!(
+            marking_target(Mode::Pane, 'a', Some(&pane), Some(&workspace)).unwrap(),
+            pane
+        );
+        assert_eq!(
+            marking_target(Mode::Pane, 'A', Some(&pane), Some(&workspace)).unwrap(),
+            workspace
+        );
+        assert!(marking_target(Mode::Pane, 'A', Some(&pane), None).is_err());
+        assert_eq!(
+            marking_target(Mode::Workspace, 'A', Some(&workspace), None).unwrap(),
+            workspace
+        );
+    }
 
     #[test]
     fn marks_are_colored_letters_without_brackets_and_label_style_is_reset() {

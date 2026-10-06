@@ -13,7 +13,7 @@ command = ["target/release/herdr-marks", "sync"]
 
 [[actions]]
 id = "mark-pane"
-title = "Marks: mark pane (a-z)"
+title = "Marks: mark pane (a-z) or workspace (A-Z)"
 contexts = ["pane"]
 command = ["target/release/herdr-marks", "open", "pane"]
 

@@ -38,7 +38,13 @@ SNAPSHOT = {
 
 class PopupTests(unittest.TestCase):
     def run_popup(
-        self, mode, key, target=None, saved_marks=None, initial_snapshot=None
+        self,
+        mode,
+        key,
+        target=None,
+        saved_marks=None,
+        initial_snapshot=None,
+        workspace_target=None,
     ):
         with tempfile.TemporaryDirectory(prefix="herdr-marks-popup-") as directory:
             root = Path(directory)
@@ -133,6 +139,8 @@ class PopupTests(unittest.TestCase):
                 )
                 if target is not None:
                     env["HERDR_MARKS_TARGET"] = json.dumps(target)
+                if workspace_target is not None:
+                    env["HERDR_MARKS_WORKSPACE_TARGET"] = json.dumps(workspace_target)
                 os.execve(BINARY, [str(BINARY), "prompt"], env)
             server.start()
             output = bytearray()
@@ -225,6 +233,80 @@ class PopupTests(unittest.TestCase):
         report = next(c for c in calls if c["method"] == "workspace.report_metadata")
         self.assertEqual(report["params"]["tokens"], {"marks": "A"})
         self.assertIn("A", next(iter(state["sessions"].values()))["marks"])
+
+    def test_shift_letter_in_regular_mark_prompt_marks_captured_workspace(self):
+        snapshot = copy.deepcopy(SNAPSHOT)
+        snapshot["workspaces"].append({"workspace_id": "w2", "label": "other"})
+        snapshot["panes"].append(
+            {
+                "pane_id": "w2:p1",
+                "terminal_id": "term_two",
+                "workspace_id": "w2",
+                "tab_id": "w2:t1",
+                "agent": "claude",
+            }
+        )
+        snapshot["focused_workspace_id"] = "w2"
+        snapshot["focused_pane_id"] = "w2:p1"
+        calls, state, output = self.run_popup(
+            "pane",
+            b"A",
+            {"kind": "pane", "terminal_id": "term_one"},
+            initial_snapshot=snapshot,
+            workspace_target={
+                "kind": "workspace",
+                "workspace_id": "w1",
+                "witnesses": ["term_one"],
+            },
+        )
+        marks = next(iter(state["sessions"].values()))["marks"]
+        self.assertEqual(set(marks), {"A"})
+        self.assertEqual(marks["A"]["target"]["workspace_id"], "w1")
+        report = next(c for c in calls if c["method"] == "workspace.report_metadata")
+        self.assertEqual(report["params"]["workspace_id"], "w1")
+        self.assertEqual(report["params"]["tokens"], {"marks": "A"})
+        self.assertFalse(any(c["method"] == "pane.report_metadata" for c in calls))
+        self.assertIn(b"Mark: a-z pane / A-Z workspace", output)
+
+    def test_lowercase_in_regular_mark_prompt_still_marks_pane(self):
+        _, state, _ = self.run_popup(
+            "pane",
+            b"a",
+            {"kind": "pane", "terminal_id": "term_one"},
+            workspace_target={
+                "kind": "workspace",
+                "workspace_id": "w1",
+                "witnesses": ["term_one"],
+            },
+        )
+        marks = next(iter(state["sessions"].values()))["marks"]
+        self.assertEqual(set(marks), {"a"})
+        self.assertEqual(
+            marks["a"]["target"], {"kind": "pane", "terminal_id": "term_one"}
+        )
+
+    def test_removal_distinguishes_uppercase_and_lowercase(self):
+        marks = {
+            "a": {
+                "target": {"kind": "pane", "terminal_id": "term_one"},
+                "label": "pane",
+            },
+            "A": {
+                "target": {
+                    "kind": "workspace",
+                    "workspace_id": "w1",
+                    "witnesses": ["term_one"],
+                },
+                "label": "workspace",
+            },
+        }
+        for key, remaining in [(b"a", "A"), (b"A", "a")]:
+            with self.subTest(key=key):
+                calls, state, _ = self.run_popup("remove", key, saved_marks=marks)
+                self.assertEqual(
+                    set(next(iter(state["sessions"].values()))["marks"]), {remaining}
+                )
+                self.assertFalse(any(c["method"].endswith(".focus") for c in calls))
 
     def test_jump_panel_uses_colored_letters_without_brackets(self):
         _, _, output = self.run_popup(

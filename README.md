@@ -31,7 +31,7 @@ your current bindings for conflicts first. Plugins never claim keys themselves.
 key = "prefix+m"
 type = "plugin_action"
 command = "herdr-marks.mark-pane"
-description = "mark pane with a letter"
+description = "mark pane or workspace with a letter"
 
 [[keys.command]]
 key = "prefix+shift+m"
@@ -58,13 +58,16 @@ command = "herdr-marks.back"
 description = "jump back"
 ```
 
-With the default prefix, **Ctrl+B → m → a** marks the pane. **Ctrl+B → M → a**
-marks the workspace as **A** (the workspace prompt uppercases your letter).
+With the default prefix, **Ctrl+B → m → a** marks the pane. In the same popup,
+**Ctrl+B → m → Shift+A** marks its workspace as **A**. Letter case selects the
+target: lowercase for panes, uppercase for workspaces. The separate
+**Ctrl+B → M → a** shortcut still works as a workspace-only prompt.
 **Ctrl+B → ' → a** jumps to pane **a**; uppercase **A** jumps to workspace **A**.
 The small popup captures the final letter, so ordinary typing is unaffected.
 Its mark letters use the same bold golden color as the sidebar, without brackets.
-**Ctrl+B → '** lists marks and jumps; **Ctrl+B → u → letter** removes one. No mark shortcut
-uses Alt, so these bindings do not conflict with Alt-based window managers.
+**Ctrl+B → '** lists marks and jumps. **Ctrl+B → u → a** removes pane mark **a**;
+**Ctrl+B → u → Shift+A** removes workspace mark **A**. No mark shortcut uses Alt,
+so these bindings do not conflict with Alt-based window managers.
 **Esc** or **Ctrl+C** cancels. **q** is a valid mark, not a quit key.
 
 ## Sidebar
@@ -136,9 +139,9 @@ Inside a Herdr pane:
 ```
 
 Plugin actions respect the supplied invocation context. The mark popup captures
-the target when opened, so changing focus while it is open cannot mark a different
-pane. CLI commands prefer the caller's Herdr IDs; jumps store the actual focused
-pane as the return location.
+both the pane and its workspace when opened, so changing focus while it is open
+cannot mark a different target. CLI commands prefer the caller's Herdr IDs;
+jumps store the actual focused pane as the return location.
 
 ## Identity, persistence, and recovery
 

@@ -1,7 +1,7 @@
 use crate::{
     api::{Host, Snapshot, TOKEN},
     model::{Resource, Session, Target, letter, safe_text},
-    popup::{Mode, input_letter},
+    popup::{self, Mode, input_letter},
     state::Store,
     workflow::{self, Operation, Selection},
 };
@@ -111,6 +111,7 @@ impl Host for FakeHost {
                 snapshot.focused_workspace_id =
                     Some(params["workspace_id"].as_str().unwrap().to_owned());
             }
+            "plugin.pane.open" => {}
             _ => panic!("unexpected request {method}"),
         }
         Ok(json!({"type": "ok"}))
@@ -616,14 +617,23 @@ fn corrupt_or_future_state_is_preserved() {
 }
 
 #[test]
-fn popup_input_normalizes_only_marking_modes() {
+fn popup_input_preserves_case_except_in_workspace_only_mode() {
     let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
     assert_eq!(input_letter(Mode::Pane, key), Some('q'));
     assert_eq!(input_letter(Mode::Workspace, key), Some('Q'));
     assert_eq!(input_letter(Mode::Jump, key), Some('q'));
     let shifted = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SHIFT);
     assert_eq!(input_letter(Mode::Jump, shifted), Some('A'));
-    assert_eq!(input_letter(Mode::Pane, shifted), Some('a'));
+    assert_eq!(input_letter(Mode::Pane, shifted), Some('A'));
+    let uppercase = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE);
+    for mode in [Mode::Pane, Mode::Jump, Mode::Remove, Mode::List] {
+        assert_eq!(input_letter(mode, uppercase), Some('A'));
+        assert_eq!(input_letter(mode, shifted), Some('A'));
+        assert_eq!(
+            input_letter(mode, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+            Some('a')
+        );
+    }
     let mut released = key;
     released.kind = KeyEventKind::Release;
     assert_eq!(input_letter(Mode::Jump, released), None);
@@ -633,6 +643,34 @@ fn popup_input_normalizes_only_marking_modes() {
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
         ),
         None
+    );
+}
+
+#[test]
+fn marking_popup_captures_both_targets_from_the_selected_pane() {
+    let host = FakeHost::new();
+    // Invocation context can contain a different workspace after a pane move.
+    popup::open(
+        &host,
+        Mode::Pane,
+        &Selection {
+            pane_id: Some("w2:p1".into()),
+            workspace_id: Some("w1".into()),
+        },
+    )
+    .unwrap();
+    let calls = host.calls.borrow();
+    let (method, params) = &calls[0];
+    assert_eq!(method, "plugin.pane.open");
+    let env = &params["env"];
+    assert_eq!(
+        serde_json::from_str::<Target>(env["HERDR_MARKS_TARGET"].as_str().unwrap()).unwrap(),
+        Target::pane(&snapshot().panes[2])
+    );
+    assert_eq!(
+        serde_json::from_str::<Target>(env["HERDR_MARKS_WORKSPACE_TARGET"].as_str().unwrap())
+            .unwrap(),
+        Target::workspace(&snapshot(), "w2").unwrap()
     );
 }
 
